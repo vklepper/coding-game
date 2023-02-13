@@ -23,7 +23,7 @@ while (TRUE) {
             if ($distToObj > $pDistToObj) {
                 $ship->move = null;
             } else {
-                dump(__LINE__);
+//                dump(__LINE__);
                 response($ship->move->target, 0);
                 continue;
             }
@@ -31,7 +31,7 @@ while (TRUE) {
 
         // Orientation si pas dans l'axe
         if ($ship->getAngleToCp(true) > 70) {
-            dump(__LINE__);
+//            dump(__LINE__);
 
             response($ship->cp, 0);
             continue;
@@ -39,7 +39,7 @@ while (TRUE) {
 
         // Orientation si pas dans l'axe
         if ($ship->getAngleToCp(true) > 55) {
-            dump(__LINE__);
+//            dump(__LINE__);
 
             response($ship->cp, 60);
             continue;
@@ -52,7 +52,7 @@ while (TRUE) {
 
                 response($ship->cp, -1);
             } else {
-                dump(__LINE__);
+//                dump(__LINE__);
 
                 response($ship->cp, 100);
             }
@@ -60,25 +60,24 @@ while (TRUE) {
         }
 
         if (makeMove($ship)) {
-            dump(__LINE__);
+//            dump(__LINE__);
 
             continue;
         }
 
         if (useBoost($ship, $game)) {
-            dump(__LINE__);
-
+            dump(sprintf('pod: %s  | angle to cp: %s', $ship->id, $ship->getAngleToCp()));
             continue;
         }
 
-        if ($ship->cp->getDistanceFrom($ship) < 3000) {
-            dump(__LINE__);
+        if ($ship->cp->getDistanceFrom($ship) < 1000) {
+//            dump(__LINE__);
 
-            response($ship->cp, 100);
+            response($ship->cp, 30);
             continue;
         }
 
-        dump(__LINE__);
+//        dump(__LINE__);
 
         response($ship->cp, 100);
 
@@ -195,7 +194,7 @@ class Game
     {
         $cp = $this->checkpoints[$cpId];
         if (!isset($this->ships[$id])) {
-            $ship = new Ship($this, $x, $y, $type, $cp, $angle);
+            $ship = new Ship($id, $this, $x, $y, $type, $cp, $angle);
             $this->ships[$id] = $ship;
             $ship->cp = $cp;
         } else {
@@ -219,10 +218,7 @@ class Game
             if ($ship->cp->position === 1) {
                 $ship->lap++;
             }
-
-            if ($ship->lap > 1) {
-                $ship->_setNextCheckPoint();
-            }
+            $ship->_setNextCheckPoint();
         }
         $ship->_calculateAngleToCp();
         $ship->_calculateNextAngle();
@@ -277,12 +273,12 @@ class MoveSharpeTurn extends Move
     const MIN_SPEED = 450;
     const MIN_DIST = 1200;
 
+
     /**  @var Coordinates */
     public $target;
 
     public function __construct(Coordinates $target)
     {
-        dump("MoveSharpeTurn");
         $this->type = Move::TYPE_SHARPETURN;
         $this->target = $target;
     }
@@ -307,7 +303,7 @@ class MoveSharpeTurn extends Move
         if ($ship->cp->getDistanceFrom($ship) < self::DIST) {
             return true;
         }
-        return true;
+        return false;
     }
 }
 
@@ -367,6 +363,8 @@ class CheckPoint extends Coordinates
 class Ship extends Coordinates
 {
     /** @var int */
+    public $id;
+    /** @var int */
     public $type;
 
     /** @var int */
@@ -409,9 +407,10 @@ class Ship extends Coordinates
     /** @var int */
     public $angle;
 
-    public function __construct(Game $game, int $x, int $y, int $type, CheckPoint $cp, int $angle)
+    public function __construct(int $id, Game $game, int $x, int $y, int $type, CheckPoint $cp, int $angle)
     {
         parent::__construct($x, $y);
+        $this->id = $id;
         $this->game = $game;
         $this->x = $x;
         $this->y = $y;
@@ -493,11 +492,13 @@ class Ship extends Coordinates
 
     public function _setNextCheckPoint(): void
     {
-        if ($this->cp->position === count($this->game->checkpoints)) {
-            $this->nCp = $this->game->checkpoints[1];
+        if ($this->cp->position === (count($this->game->checkpoints) - 1)) {
+            $this->nCp = $this->game->checkpoints[0];
+
+            return;
         }
 
-        $this->nCp = $this->game->checkpoints[$this->cp->position];
+        $this->nCp = $this->game->checkpoints[$this->cp->position + 1];
     }
 }
 
@@ -552,13 +553,13 @@ class Tools
      */
     public static function findQuadrant(Coordinates $origin, Coordinates $target): int
     {
-        if ($target->x > $origin->x and $target->y < $origin->y) {
+        if ($target->x >= $origin->x and $target->y <= $origin->y) {
             return 1;
-        } elseif ($target->x < $origin->x and $target->y < $origin->y) {
+        } elseif ($target->x < $origin->x and $target->y <= $origin->y) {
             return 2;
         } elseif ($target->x < $origin->x and $target->y > $origin->y) {
             return 3;
-        } elseif ($target->x > $origin->x and $target->y > $origin->y) {
+        } elseif ($target->x >= $origin->x and $target->y > $origin->y) {
             return 4;
         }
         throw new Exception('Error in findQuadrant()');
