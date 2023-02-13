@@ -1,12 +1,17 @@
 <?php
 
-$game = new Game();
+fscanf(STDIN, "%d", $lap);
+$game = new Game($lap);
+fscanf(STDIN, "%d", $checkpointCount);
+for ($i = 0; $i < $checkpointCount; $i++) {
+    fscanf(STDIN, "%d %d", $cpX, $cpY);
+    $cp = new CheckPoint($cpX, $cpY, $i);
+    $game->checkpoints[] = $cp;
+}
 
 while (TRUE) {
-    //error_log(var_export("array cp", true));
-    //error_log(var_export($checkPoints, true));
     $game->refreshState();
-    $game->logState();
+//    $game->logState();
 
     foreach ($game->ships as $ship) {
         if ($ship->type === Game::TEAM_OPPONENT) {
@@ -18,64 +23,76 @@ while (TRUE) {
             if ($distToObj > $pDistToObj) {
                 $ship->move = null;
             } else {
+                dump(__LINE__);
                 response($ship->move->target, 0);
                 continue;
             }
         }
 
         // Orientation si pas dans l'axe
-        if ($ship->cp->getAngle(true) > 70) {
+        if ($ship->getAngleToCp(true) > 70) {
+            dump(__LINE__);
+
             response($ship->cp, 0);
             continue;
         }
 
         // Orientation si pas dans l'axe
-        if ($ship->cp->getAngle(true) > 55) {
+        if ($ship->getAngleToCp(true) > 55) {
+            dump(__LINE__);
+
             response($ship->cp, 60);
             continue;
         }
-        /*
-            // Orientation si pas dans l'axe
-            if ($ship->cp->getAngle(true) > 30) {
-                response($ship->cp, 40);
-                continue;
-            }
-        */
+
         // Si dernier checkpoint, pas de question a se poser GOGOGOGO
-        if ($ship->lap === 3 && $ship->cp->position == count($ship->checkpoints)) {
-            if ($ship->boostRemaining > 0 && $ship->cp->getAngle(true) < 10) {
+        if ($ship->lap === 3 && $ship->cp->position == count($game->checkpoints)) {
+            if ($game->boostRemaining > 0 && $ship->getAngleToCp(true) < 10) {
+                dump('boost de fin');
+
                 response($ship->cp, -1);
             } else {
+                dump(__LINE__);
+
                 response($ship->cp, 100);
             }
             continue;
         }
 
         if (makeMove($ship)) {
+            dump(__LINE__);
+
             continue;
         }
 
-        if (useBoost($ship)) {
+        if (useBoost($ship, $game)) {
+            dump(__LINE__);
+
             continue;
         }
 
         if ($ship->cp->getDistanceFrom($ship) < 3000) {
+            dump(__LINE__);
+
             response($ship->cp, 100);
             continue;
         }
 
+        dump(__LINE__);
+
         response($ship->cp, 100);
+
     }
 
 }
 
-function useBoost(Ship $ship): bool
+function useBoost(Ship $ship, Game $game): bool
 {
     // Pas de boost dans le premier tour
-    if ($ship->boostRemaining === 0 || $ship->lap === 1) {
+    if ($game->boostRemaining === 0 || $ship->lap === 1) {
         return false;
     }
-    if ($ship->cp->angle < 15 && $ship->cp->angle > -15) {
+    if ($ship->getAngleToCp() < 15 && $ship->getAngleToCp() > -15) {
         /*
         if ($game->lap === 3) {
             // Si ligne droite, on envois
@@ -97,7 +114,7 @@ function useBoost(Ship $ship): bool
 
         // Si ligne droite, on envoie un boost
         if ($ship->cp->getDistanceFrom($ship) > 10000) {
-            $ship->boostRemaining--;
+            $game->boostRemaining--;
             response($ship->cp, -1);
             return true;
         }
@@ -128,69 +145,87 @@ function makeMove(Ship $ship): bool
     return false;
 }
 
+class Coordinates
+{
+    /** @var int */
+    public $x;
+
+    /** @var int */
+    public $y;
+
+    public function __construct(int $x, int $y)
+    {
+        $this->x = $x;
+        $this->y = $y;
+    }
+
+    public function getDistanceFrom(Coordinates $p): int
+    {
+        return Tools::getDistance($this, $p);
+    }
+}
+
+
 class Game
 {
     const TEAM_ROCKET = 1;
     const TEAM_OPPONENT = 2;
+
+    /** @var int */
+    public $lap;
+
+    /** @var CheckPoint[] */
+    public $checkpoints = [];
+
     /** @var Ship[] */
     public $ships = [];
+
+    /** @var int */
+    public $boostRemaining = 1;
+
+    public function __construct(int $lap)
+    {
+        $this->lap = $lap;
+    }
 
     /**
      * @throws Exception
      */
-    public function initShip(int $id, int $type, $x, $y, $cpX = null, $cpY = null, $cpAngle = null)
+    public function initShip(int $id, int $type, int $x, int $y, int $cpId, int $angle = null)
     {
-        $ship = $this->ships[$id];
-        if ($ship === null) {
-            $ship = new Ship($x, $y, $type);
-            if ($type === Game::TEAM_OPPONENT) {
-                return;
-            }
-            $ship->cp = new CheckPoint($cpX, $cpY, 1);
-            $ship->checkpoints[$ship->cp->position] = $ship->cp;
+        $cp = $this->checkpoints[$cpId];
+        if (!isset($this->ships[$id])) {
+            $ship = new Ship($this, $x, $y, $type, $cp, $angle);
+            $this->ships[$id] = $ship;
+            $ship->cp = $cp;
         } else {
+            $ship = $this->ships[$id];
             $ship->updatePosition($x, $y);
-            if ($type === Game::TEAM_OPPONENT) {
-                return;
-            }
-            $this->updateCheckpoint($ship, $cpX, $cpY, $cpAngle);
-
-            $ship->_setIsSafe();
+            $this->updateCheckpoint($ship, $cp);
+//            $ship->_setIsSafe();
         }
     }
 
     /**
      * @throws Exception
      */
-    public function updateCheckpoint(Ship $ship, $cpX, $cpY, $cpAngle)
+    public function updateCheckpoint(Ship $ship, CheckPoint $cp)
     {
         // Si le checkpoint a changé, c'est qu'on a franchi le précédent
-        if ($ship->cp->x !== $cpX || $ship->cp->y !== $cpY) {
+        if ($ship->cp !== $cp) {
             $ship->move = null;
-            $res = array_values(array_filter($ship->checkpoints, function (CheckPoint $checkPoint) use ($cpX, $cpY) {
-                return $checkPoint->x === $cpX && $checkPoint->y === $cpY;
-            }));
-
-            if (count($res) === 1) {
-                $ship->pCp = $ship->cp;
-                $ship->cp = $res[0];
-                if ($ship->cp->position === 1) {
-                    $ship->lap++;
-                }
-            } elseif (count($res) === 0) {
-                $ship->cp = new CheckPoint($cpX, $cpY, count($ship->checkpoints) + 1);
-                $ship->checkpoints[$ship->cp->position] = $ship->cp;
-            } else {
-                throw new Exception("fuck");
+            $ship->pCp = $ship->cp;
+            $ship->cp = $cp;
+            if ($ship->cp->position === 1) {
+                $ship->lap++;
             }
 
             if ($ship->lap > 1) {
-                $ship->nCp = $ship->_setNextCheckPoint();
+                $ship->_setNextCheckPoint();
             }
         }
-
-        $ship->nextAngle = $ship->_calculateNextAngle();
-        $ship->cp->setAngle($cpAngle);
+        $ship->_calculateAngleToCp();
+        $ship->_calculateNextAngle();
     }
 
     /**
@@ -198,32 +233,26 @@ class Game
      */
     public function refreshState(): bool
     {
-        fscanf(STDIN, "%d %d %d %d %d %d", $x, $y, $cpX, $cpY, $cpDist, $cpAngle);
-        $this->initShip(1, Game::TEAM_ROCKET, $x, $y, $cpX, $cpY, $cpAngle);
-        fscanf(STDIN, "%d %d %d %d %d %d", $x, $y, $cpX, $cpY, $cpDist, $cpAngle);
-        $this->initShip(2, Game::TEAM_ROCKET, $x, $y, $cpX, $cpY, $cpAngle);
+        fscanf(STDIN, "%d %d %d %d %d %d", $x, $y, $vx, $vy, $angle, $cpId);
+        $this->initShip(1, Game::TEAM_ROCKET, $x, $y, $cpId, $angle);
+        fscanf(STDIN, "%d %d %d %d %d %d", $x, $y, $vx, $vy, $angle, $cpId);
+        $this->initShip(2, Game::TEAM_ROCKET, $x, $y, $cpId, $angle);
 
-        fscanf(STDIN, "%d %d", $opponentX, $opponentY);
-        $this->initShip(3, Game::TEAM_OPPONENT, $opponentX, $opponentY);
-        fscanf(STDIN, "%d %d", $opponentX, $opponentY);
-        $this->initShip(4, Game::TEAM_OPPONENT, $opponentX, $opponentY);
+        fscanf(STDIN, "%d %d %d %d %d %d", $x, $y, $vx, $vy, $angle, $cpId);
+        $this->initShip(3, Game::TEAM_OPPONENT, $x, $y, $cpId, $angle);
+        fscanf(STDIN, "%d %d %d %d %d %d", $x, $y, $vx, $vy, $angle, $cpId);
+        $this->initShip(4, Game::TEAM_OPPONENT, $x, $y, $cpId, $angle);
 
         return true;
     }
 
     public function logState()
     {
-//        dump([
-//            'lap' => $this->lap,
-//            'boostRemaining' => $this->boostRemaining,
-//            'direction' => $this->cp->position,
-//            'distance' => Tools::getDistance($this->ship, $this->cp),
-//            'isSafe' => $this->isSafe(),
-//            'angleToTarget' => $this->cp->getAngle(),
-//            'angle' => $this->getNextAngle(),
-//            'speed' => $this->ship->getSpeed(),
-//            'move' => $this->move ? get_class($this->move) : null,
-//        ]);
+        dump([
+            'lap' => $this->lap,
+            'boostRemaining' => $this->boostRemaining,
+            'ships' => $this->ships
+        ]);
     }
 
     public function logFullState()
@@ -248,7 +277,7 @@ class MoveSharpeTurn extends Move
     const MIN_SPEED = 450;
     const MIN_DIST = 1200;
 
-    /**  @var Coordinate */
+    /**  @var Coordinates */
     public $target;
 
     public function __construct(Coordinates $target)
@@ -289,7 +318,7 @@ class MoveTurnBack extends Move
     const MIN_SPEED = 500;
     const MIN_DIST = 800;
 
-    /**  @var Coordinate */
+    /**  @var Coordinates */
     public $target;
 
     public function __construct(Coordinates $target)
@@ -323,67 +352,32 @@ class MoveTurnBack extends Move
     }
 }
 
-class Coordinates
-{
-    /** @var int */
-    public $x;
-
-    /** @var int */
-    public $y;
-
-    public function __construct(int $x, int $y)
-    {
-        $this->x = $x;
-        $this->y = $y;
-    }
-
-    public function getDistanceFrom(Coordinates $p): int
-    {
-        return Tools::getDistance($this, $p);
-    }
-}
-
 class CheckPoint extends Coordinates
 {
     /** @var int */
     public $position;
 
-    /**@var int */
-    public $angle;
-
     public function __construct(int $x, int $y, int $position)
     {
         parent::__construct($x, $y);
-        $this->x = $x;
-        $this->y = $y;
         $this->position = $position;
     }
-
-    public function setAngle(int $angle): self
-    {
-        $this->angle = $angle;
-
-        return $this;
-    }
-
-    public function getAngle(bool $abs = false): int
-    {
-        return $abs ? abs($this->angle) : $this->angle;
-    }
 }
-
 
 class Ship extends Coordinates
 {
     /** @var int */
     public $type;
+
     /** @var int */
     public $lap = 1;
+    /**
+     * @var int
+     */
+    public $angleToCp;
 
-    /** @var int */
-    public $boostRemaining = 1;
-
-    public $checkpoints = [];
+    /** @var Game */
+    protected $game;
 
     /** @var ?CheckPoint */
     public $cp = null;
@@ -400,6 +394,9 @@ class Ship extends Coordinates
     /** @var ?float */
     public $nextAngle = null;
 
+    /** @var Coordinates */
+    public $previousPosition = null;
+
     /** @var Bool */
     public $isSafe = false;
 
@@ -409,15 +406,18 @@ class Ship extends Coordinates
     /** @var ?int */
     public $previousSpeed = null;
 
-    /** ?Coordinates */
-    public $previousPosition = null;
+    /** @var int */
+    public $angle;
 
-    public function __construct(int $x, int $y, int $type)
+    public function __construct(Game $game, int $x, int $y, int $type, CheckPoint $cp, int $angle)
     {
         parent::__construct($x, $y);
+        $this->game = $game;
         $this->x = $x;
         $this->y = $y;
         $this->type = $type;
+        $this->cp = $cp;
+        $this->angle = $angle;
     }
 
     public function updatePosition(int $x, int $y)
@@ -429,26 +429,12 @@ class Ship extends Coordinates
         $this->x = $x;
         $this->y = $y;
 
-        $this->speed = Tools::getDistance($this->previousPosition, new Coordinates($x, $y));
+        $this->speed = Tools::getDistance($this->previousPosition, $this);
     }
 
     public function getSpeed(): ?int
     {
         return $this->speed;
-    }
-
-    public function getPreviousSpeed(): ?int
-    {
-        return $this->previousSpeed;
-    }
-
-    public function isAccelerating(): ?bool
-    {
-        if ($this->getSpeed() && $this->getPreviousSpeed()) {
-            return $this->getPreviousSpeed() < $this->getSpeed();
-        }
-
-        return null;
     }
 
     public function isSafe(): bool
@@ -466,7 +452,16 @@ class Ship extends Coordinates
 //        }
     }
 
-    public function getNextAngle(bool $absolute = false): ?float
+    public function getAngleToCp(bool $absolute = false): int
+    {
+        if ($absolute) {
+            return abs($this->angleToCp);
+        }
+
+        return $this->angleToCp;
+    }
+
+    public function getNextAngle(bool $absolute = false): ?int
     {
         if ($absolute) {
             return abs($this->nextAngle);
@@ -479,42 +474,30 @@ class Ship extends Coordinates
         return $this->nCp;
     }
 
-    public function _calculateNextAngle(): ?float
+    /**
+     * @throws Exception
+     */
+    public function _calculateAngleToCp(): void
+    {
+        $this->angleToCp = Tools::getGlobalAngle($this, $this->cp);
+    }
+
+    public function _calculateNextAngle(): void
     {
         if ($this->cp === null || $this->nCp === null) {
-            return null;
+            return;
         }
-        return Tools::getAngle($this, $this->cp, $this->nCp);
+        $angle = Tools::getAngle($this, $this->cp, $this->nCp);
+        $this->nextAngle = $angle;
     }
 
-    public function _setNextCheckPoint(): ?CheckPoint
+    public function _setNextCheckPoint(): void
     {
-        // Si c'est le premier tour, on ne connait pas encore tous les checkpoints
-        if ($this->lap === 1) {
-            return null;
+        if ($this->cp->position === count($this->game->checkpoints)) {
+            $this->nCp = $this->game->checkpoints[1];
         }
 
-        if ($this->cp->position === count($this->checkpoints)) {
-            return $this->checkpoints[1];
-        }
-
-        return $this->checkpoints[$this->cp->position + 1];
-    }
-}
-
-class Vector
-{
-    public $x;
-    public $y;
-    public $angle;
-    public $abs;
-
-    public function __construct(int $x, int $y)
-    {
-        $this->x = $x;
-        $this->y = $y;
-        $this->angle = atan2($x, $y);
-        $this->abs = hypot($x, $y);
+        $this->nCp = $this->game->checkpoints[$this->cp->position];
     }
 }
 
@@ -535,6 +518,26 @@ class Tools
         return (int)round($angle);
     }
 
+    /**
+     * @throws Exception
+     */
+    public static function getGlobalAngle(Coordinates $p1, Coordinates $p2): int
+    {
+//        $d = self::getDistance($p1, $p2);
+        $q = self::findQuadrant($p1, $p2);
+
+        $diff = new Coordinates($p1->x - $p2->x, $p1->y - $p2->y);
+        $localAngle = atan2($diff->y, $diff->x);
+        $globalAngle = 0;
+        if ($q === 1 || $q === 2) {
+            $globalAngle = pi() - $localAngle;
+        } elseif ($q === 3 || $q === 4) {
+            $globalAngle = -pi() - $localAngle;
+        }
+
+        return round($globalAngle);
+    }
+
     public static function getDistance(Coordinates $p1, Coordinates $p2): int
     {
         $x = $p2->x - $p1->x;
@@ -545,7 +548,7 @@ class Tools
     }
 
     /**
-     * @throws exception
+     * @throws Exception
      */
     public static function findQuadrant(Coordinates $origin, Coordinates $target): int
     {
@@ -558,34 +561,7 @@ class Tools
         } elseif ($target->x > $origin->x and $target->y > $origin->y) {
             return 4;
         }
-        throw new exception('fuck');
-    }
-
-    /**
-     * @throws exception
-     */
-    public static function getVector(Coordinates $p1, Coordinates $p2): Vector
-    {
-        $quadrant = Tools::findQuadrant($p1, $p2);
-
-        $x = 0;
-        $y = 0;
-
-        if ($quadrant === 1) {
-            $x = $p2->x - $p1->x;
-            $y = $p1->y - $p2->y;
-        } elseif ($quadrant === 2) {
-            $x = ($p1->x - $p2->x) * -1;
-            $y = $p1->y - $p2->y;
-        } elseif ($quadrant === 3) {
-            $x = ($p1->x - $p2->x) * -1;
-            $y = ($p2->y - $p1->y) * -1;
-        } elseif ($quadrant === 4) {
-            $x = $p2->x - $p1->x;
-            $y = ($p2->y - $p1->y) * -1;
-        }
-
-        return new Vector($x, $y);
+        throw new Exception('Error in findQuadrant()');
     }
 }
 
